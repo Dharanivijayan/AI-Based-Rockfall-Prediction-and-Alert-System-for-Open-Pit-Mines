@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Rockfall Risk Control Room</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<style>
+  :root {
+    --charcoal: #262321;
+    --panel: #332e2a;
+    --alert: #d9622b;
+    --warn: #c9a227;
+    --evac: #a8281c;
+    --sand: #ede6dc;
+    --muted: #8a8278;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    background: var(--charcoal);
+    color: var(--sand);
+  }
+  header { padding: 20px 28px; border-bottom: 1px solid #443e38; }
+  header h1 { margin: 0; font-size: 22px; }
+  header p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; padding: 24px; }
+  .card { background: var(--panel); border-radius: 10px; padding: 18px; }
+  .card h2 { margin: 0 0 4px; font-size: 16px; }
+  .score { font-size: 42px; font-weight: 700; margin: 6px 0; }
+  .tier { display: inline-block; padding: 4px 12px; border-radius: 6px; font-size: 12px; font-weight: 700; letter-spacing: 1px; }
+  .tier.ADVISORY { background: var(--warn); color: #262321; }
+  .tier.WARNING  { background: var(--alert); color: white; }
+  .tier.EVACUATE { background: var(--evac); color: white; }
+  .chart-wrap { padding: 0 24px 24px; }
+  .chart-card { background: var(--panel); border-radius: 10px; padding: 18px; }
+  .controls { display: flex; gap: 10px; padding: 0 24px 24px; }
+  button { background: var(--alert); color: white; border: none; padding: 10px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+  button:hover { background: #b84d1f; }
+  .alerts { padding: 0 24px 30px; }
+  .alerts table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .alerts th, .alerts td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #443e38; }
+  .alerts th { color: var(--muted); font-weight: 600; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>⛰ Rockfall Risk Control Room</h1>
+  <p>AI-Based Rockfall Prediction and Alert System — live monitoring demo</p>
+</header>
+
+<div class="grid" id="zoneCards"></div>
+
+<div class="controls">
+  <button onclick="injectSpike('Zone-A')">Simulate spike: Zone-A</button>
+  <button onclick="injectSpike('Zone-B')">Simulate spike: Zone-B</button>
+  <button onclick="injectSpike('Zone-C')">Simulate spike: Zone-C</button>
+</div>
+
+<div class="chart-wrap">
+  <div class="chart-card">
+    <canvas id="riskChart" height="90"></canvas>
+  </div>
+</div>
+
+<div class="alerts">
+  <h2>Alert Log</h2>
+  <table>
+    <thead><tr><th>Time</th><th>Zone</th><th>Score</th><th>Tier</th></tr></thead>
+    <tbody id="alertRows"></tbody>
+  </table>
+</div>
+
+<script>
+const API_BASE = "http://localhost:8000";
+const ZONES = ["Zone-A", "Zone-B", "Zone-C"];
+const colors = { "Zone-A": "#d9622b", "Zone-B": "#8C4A2F", "Zone-C": "#c9a227" };
+
+const ctx = document.getElementById("riskChart").getContext("2d");
+const chart = new Chart(ctx, {
+  type: "line",
+  data: {
+    labels: [],
+    datasets: ZONES.map(z => ({
+      label: z, data: [], borderColor: colors[z], backgroundColor: "transparent",
+      tension: 0.3, pointRadius: 0,
+    })),
+  },
+  options: {
+    responsive: true,
+    scales: {
+      y: { min: 0, max: 100, ticks: { color: "#8a8278" }, grid: { color: "#443e38" } },
+      x: { ticks: { color: "#8a8278", maxTicksLimit: 8 }, grid: { color: "#443e38" } },
+    },
+    plugins: { legend: { labels: { color: "#ede6dc" } } },
+  },
+});
+
+function renderZoneCards(latest) {
+  const container = document.getElementById("zoneCards");
+  container.innerHTML = "";
+  ZONES.forEach(z => {
+    const r = latest[z];
+    container.innerHTML += `
+      <div class="card">
+        <h2>${z}</h2>
+        <div class="score">${r.score}</div>
+        <span class="tier ${r.tier}">${r.tier}</span>
+      </div>`;
+  });
+}
+
+function pushChartPoint(latest) {
+  const label = new Date().toLocaleTimeString();
+  chart.data.labels.push(label);
+  if (chart.data.labels.length > 30) chart.data.labels.shift();
+  ZONES.forEach((z, i) => {
+    chart.data.datasets[i].data.push(latest[z].score);
+    if (chart.data.datasets[i].data.length > 30) chart.data.datasets[i].data.shift();
+  });
+  chart.update();
+}
+
+async function renderAlerts() {
+  const res = await fetch(`${API_BASE}/api/alerts`);
+  const { alerts } = await res.json();
+  const rows = document.getElementById("alertRows");
+  rows.innerHTML = alerts.slice().reverse().map(a => `
+    <tr>
+      <td>${new Date(a.timestamp).toLocaleTimeString()}</td>
+      <td>${a.zone}</td>
+      <td>${a.score}</td>
+      <td><span class="tier ${a.tier}">${a.tier}</span></td>
+    </tr>`).join("");
+}
+
+async function poll() {
+  try {
+    const res = await fetch(`${API_BASE}/api/risk/latest`);
+    const latest = await res.json();
+    renderZoneCards(latest);
+    pushChartPoint(latest);
+    renderAlerts();
+  } catch (e) {
+    console.error("API not reachable yet:", e);
+  }
+}
+
+async function injectSpike(zone) {
+  await fetch(`${API_BASE}/api/simulate/spike`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ zone, duration_ticks: 15 }),
+  });
+}
+
+poll();
+setInterval(poll, 2000);
+</script>
+
+</body>
+</html>
