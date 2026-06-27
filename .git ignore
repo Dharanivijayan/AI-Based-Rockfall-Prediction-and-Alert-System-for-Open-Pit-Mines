@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+venv/
+.env
+*.joblib
+data/sensor_data.csv
+.DS_Store
